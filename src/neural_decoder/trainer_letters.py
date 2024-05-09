@@ -9,23 +9,23 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 
-from .model import GRUDecoder, TransformerSequenceEmbedding
-from .dataset import SpeechDataset, id2ph
-import wandb
+from .model import GRUDecoder
+from .dataset import SpeechDataset
 
-# id2ph_ = [
-#     'AA', 'AE', 'AH', 'AO', 'AW',
-#     'AY', 'B',  'CH', 'D', 'DH',
-#     'EH', 'ER', 'EY', 'F', 'G',
-#     'HH', 'IH', 'IY', 'JH', 'K',
-#     'L', 'M', 'N', 'NG', 'OW',
-#     'OY', 'P', 'R', 'S', 'SH',
-#     'T', 'TH', 'UH', 'UW', 'V',
-#     'W', 'Y', 'Z', 'ZH', ' '
-# ]
+id2ph_ = [
+    'AA', 'AE', 'AH', 'AO', 'AW',
+    'AY', 'B',  'CH', 'D', 'DH',
+    'EH', 'ER', 'EY', 'F', 'G',
+    'HH', 'IH', 'IY', 'JH', 'K',
+    'L', 'M', 'N', 'NG', 'OW',
+    'OY', 'P', 'R', 'S', 'SH',
+    'T', 'TH', 'UH', 'UW', 'V',
+    'W', 'Y', 'Z', 'ZH', ' '
+]
 
-# def id2ph(i):
-#     return id2ph_[i-1]
+def id2ph(i):
+    return id2ph_[i-1]
+
 
 def getDatasetLoaders(
     datasetName,
@@ -71,8 +71,6 @@ def getDatasetLoaders(
     return train_loader, test_loader, loadedData
 
 def trainModel(args):
-    wandb.init(project='ctc', name=args['modelName'])
-
     os.makedirs(args["outputDir"], exist_ok=True)
     torch.manual_seed(args["seed"])
     np.random.seed(args["seed"])
@@ -86,20 +84,19 @@ def trainModel(args):
         args["batchSize"],
     )
 
-    # model = GRUDecoder(
-    #     neural_dim=args["nInputFeatures"],
-    #     n_classes=args["nClasses"],
-    #     hidden_dim=args["nUnits"],
-    #     layer_dim=args["nLayers"],
-    #     nDays=len(loadedData["train"]),
-    #     dropout=args["dropout"],
-    #     device=device,
-    #     strideLen=args["strideLen"],
-    #     kernelLen=args["kernelLen"],
-    #     gaussianSmoothWidth=args["gaussianSmoothWidth"],
-    #     bidirectional=args["bidirectional"],
-    # ).to(device)
-    model = TransformerSequenceEmbedding().to(device)
+    model = GRUDecoder(
+        neural_dim=args["nInputFeatures"],
+        n_classes=args["nClasses"],
+        hidden_dim=args["nUnits"],
+        layer_dim=args["nLayers"],
+        nDays=len(loadedData["train"]),
+        dropout=args["dropout"],
+        device=device,
+        strideLen=args["strideLen"],
+        kernelLen=args["kernelLen"],
+        gaussianSmoothWidth=args["gaussianSmoothWidth"],
+        bidirectional=args["bidirectional"],
+    ).to(device)
     # model = loadModel('/mnt/scratch/kudrinsk/eval_challenge/trains/baseline_big/')
 
     loss_ctc = torch.nn.CTCLoss(blank=0, reduction="mean", zero_infinity=True)
@@ -145,13 +142,12 @@ def trainModel(args):
             )
 
         # Compute prediction error
-        # pred = model.forward(X, dayIdx)
-        pred = model.forward(X, X_len)
+        pred = model.forward(X, dayIdx)
 
         loss = loss_ctc(
             torch.permute(pred.log_softmax(2), [1, 0, 2]),
             y,
-            X_len, # ((X_len - model.kernelLen) / model.strideLen).to(torch.int32),
+            ((X_len - model.kernelLen) / model.strideLen).to(torch.int32),
             y_len,
         )
         loss = torch.sum(loss)
@@ -179,20 +175,19 @@ def trainModel(args):
                         testDayIdx.to(device),
                     )
 
-                    # pred = model.forward(X, testDayIdx)
-                    pred = model.forward(X, X_len)
+                    pred = model.forward(X, testDayIdx)
                     loss = loss_ctc(
                         torch.permute(pred.log_softmax(2), [1, 0, 2]),
                         y,
-                        X_len, #((X_len - model.kernelLen) / model.strideLen).to(torch.int32),
+                        ((X_len - model.kernelLen) / model.strideLen).to(torch.int32),
                         y_len,
                     )
                     loss = torch.sum(loss)
                     allLoss.append(loss.cpu().detach().numpy())
 
-                    adjustedLens = X_len # ((X_len - model.kernelLen) / model.strideLen).to(
-                        #torch.int32
-                    #)
+                    adjustedLens = ((X_len - model.kernelLen) / model.strideLen).to(
+                        torch.int32
+                    )
                     for iterIdx in range(pred.shape[0]):
                         # print(pred[iterIdx])
                         decodedSeq = torch.argmax(
@@ -207,9 +202,8 @@ def trainModel(args):
                             y[iterIdx][0 : y_len[iterIdx]].cpu().detach()
                         )
 
-                        if iterIdx == 0:
-                            print('GT:', ''.join([id2ph[p] for p in trueSeq]))
-                            print('PRED:', ''.join([id2ph[p] for p in decodedSeq]))
+                        # print('GT:', ' '.join([id2ph(p) for p in trueSeq]))
+                        # print('PRED:', ' '.join([id2ph(p) for p in decodedSeq]))
                         # print(decodedSeq)
 
                         matcher = SequenceMatcher(
@@ -225,7 +219,6 @@ def trainModel(args):
                 print(
                     f"batch {batch}, ctc loss: {avgDayLoss:>7f}, cer: {cer:>7f}, train loss: {np.mean(train_loss[-100:]):>7f}, time/batch: {(endTime - startTime)/100:>7.3f}"
                 )
-                wandb.log({"eval/loss": avgDayLoss, 'train/loss': np.mean(train_loss[-100:]), 'eval/cer': cer})
                 startTime = time.time()
 
             if len(testCER) > 0 and cer < np.min(testCER):

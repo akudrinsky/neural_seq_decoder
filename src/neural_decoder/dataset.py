@@ -1,6 +1,11 @@
 import torch
 from torch.utils.data import Dataset
 
+import string
+
+phoneme_list = list('_' + string.ascii_lowercase + ' ')
+id2ph = {i: ph for i, ph in enumerate(phoneme_list)}
+ph2id = {ph: i for i, ph in enumerate(phoneme_list)}
 
 class SpeechDataset(Dataset):
     def __init__(self, data, transform=None):
@@ -14,12 +19,14 @@ class SpeechDataset(Dataset):
         self.neural_time_bins = []
         self.phone_seq_lens = []
         self.days = []
+        self.transcriptions = []
         for day in range(self.n_days):
             for trial in range(len(data[day]["sentenceDat"])):
                 self.neural_feats.append(data[day]["sentenceDat"][trial])
                 self.phone_seqs.append(data[day]["phonemes"][trial])
                 self.neural_time_bins.append(data[day]["sentenceDat"][trial].shape[0])
                 self.phone_seq_lens.append(data[day]["phoneLens"][trial])
+                self.transcriptions.append(data[day]['transcriptions'][trial])
                 self.days.append(day)
 
     def __len__(self):
@@ -31,10 +38,15 @@ class SpeechDataset(Dataset):
         if self.transform:
             neural_feats = self.transform(neural_feats)
 
+        text = self.transcriptions[idx]
+        tokens = torch.tensor([ph2id[t] for t in text.lower() if t in ph2id], dtype=torch.int32)
+        tokens_len = torch.tensor(len(tokens), dtype=torch.int32)
+
         return (
             neural_feats,
-            torch.tensor(self.phone_seqs[idx], dtype=torch.int32),
+            tokens, # torch.tensor(self.phone_seqs[idx], dtype=torch.int32),
             torch.tensor(self.neural_time_bins[idx], dtype=torch.int32),
-            torch.tensor(self.phone_seq_lens[idx], dtype=torch.int32),
+            tokens_len, # torch.tensor(self.phone_seq_lens[idx], dtype=torch.int32),
             torch.tensor(self.days[idx], dtype=torch.int64),
+            self.transcriptions[idx]
         )

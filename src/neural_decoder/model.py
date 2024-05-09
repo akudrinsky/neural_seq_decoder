@@ -1,7 +1,85 @@
 import torch
 from torch import nn
+import math
 
 from .augmentations import GaussianSmoothing
+
+
+class TransformerSequenceEmbedding(nn.Module):
+    def __init__(self, input_dim=256, embed_dim=512, num_heads=4, num_layers=1, dropout_rate=0.2, n_classes=28):
+        super(TransformerSequenceEmbedding, self).__init__()
+        
+        self.input_dim = input_dim
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        
+        # Layer to expand and project the input to the embedding dimension
+        self.embedding = nn.Linear(input_dim, embed_dim)
+
+        self.layers = nn.Sequential(
+            nn.Conv1d(embed_dim, embed_dim, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(embed_dim, embed_dim, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(embed_dim, embed_dim, kernel_size=3, stride=1, padding=2, dilation=2),
+            nn.ReLU(),
+            nn.Conv1d(embed_dim, embed_dim, kernel_size=3, stride=1, padding=4, dilation=4),
+            nn.ReLU(),
+            nn.Conv1d(embed_dim, embed_dim, kernel_size=3, stride=1, padding=8, dilation=8),
+        )
+        
+        # Positional encoding layer
+        self.positional_encoding = PositionalEncoding(embed_dim, dropout_rate)
+        
+        # Transformer Encoder
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dropout=dropout_rate, batch_first=True)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.out = nn.Linear(embed_dim, n_classes)
+
+    def create_padding_mask_from_lengths(self, lengths, max_len=None):
+        if max_len is None:
+            max_len = max(lengths)
+        batch_size = len(lengths)
+        mask = torch.ones(batch_size, max_len)
+        for i, length in enumerate(lengths):
+            mask[i, :length] = 0
+        return mask.bool()
+    
+    def forward(self, x, x_len):
+        # Apply the linear projection
+        x = self.embedding(x)
+        mask = self.create_padding_mask_from_lengths(x_len).to(x.device)
+        x = self.layers(x.transpose(1, 2)).transpose(1, 2)
+        
+        # Add positional encodings
+        x = self.positional_encoding(x)
+        
+        # Pass through the transformer
+        x = self.transformer_encoder(x, src_key_padding_mask=mask)
+        
+        x = self.out(x)
+        assert not torch.isnan(x).any()
+        
+        return x
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + self.pe[:x.size(0)]
+        return self.dropout(x)
+
 
 
 class GRUDecoder(nn.Module):

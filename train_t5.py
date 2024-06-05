@@ -14,44 +14,34 @@ from torch.utils.data import DataLoader
 from dataset import DecoderDataset, split_dataset
 from models import GRUEncoder, TransformerSequenceEmbedding
 from transformers.models.whisper.english_normalizer import BasicTextNormalizer
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from transformers import AutoTokenizer, T5ForConditionalGeneration, T5Config
 
 class NeuroT5(nn.Module):
     def __init__(self):
         super().__init__()
+        
+        self.linear = nn.Linear(256, 1472)
 
-        self.unfolder = torch.nn.Unfold(
-            (32, 1), dilation=1, padding=0, stride=4
-        )
-        self.linear = nn.Linear(8192, 512)
-
-        self.t5 = T5ForConditionalGeneration.from_pretrained("google-t5/t5-small")
+        self.t5 = T5ForConditionalGeneration.from_pretrained("google/byt5-small")
 
     def forward(self, neuro, neuro_mask, labels=None):
-        # print(neuro.shape)
-        neuro = self.unfolder(neuro.transpose(1, 2).unsqueeze(3)).transpose(1, 2)
-        # print(neuro.shape)
-        stride_length = 4
-        # print(neuro_mask.shape)
-        neuro_mask = neuro_mask[:, ::stride_length][:, :neuro.shape[1]]
-        # print(neuro_mask.shape)
-        
         input_embeds = self.linear(neuro)
 
         outputs = self.t5(inputs_embeds=input_embeds, attention_mask=neuro_mask, labels=labels)
         return outputs
 
 model = NeuroT5()
-tokenizer = AutoTokenizer.from_pretrained("google-t5/t5-small")
+tokenizer = AutoTokenizer.from_pretrained("google/byt5-small")
 
-exp_name = 'neuroT5_unfolder'
+exp_name = 'neuroT5_byt5'
 
 wandb.init(project='decoder', name=exp_name)
 
 device = 'cuda'
 epochs = 1000
-batch_size = 240
+batch_size = 10
 
 save_dir = f'../ckpts/{exp_name}/'
 os.makedirs(save_dir, exist_ok=True)
@@ -108,7 +98,9 @@ eval_loader = DataLoader(
 )
 
 model.to(device)
-optimizer = AdamW(model.parameters(), lr=5e-3)
+optimizer = AdamW(model.parameters(), lr=5e-1)
+scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, verbose=True, min_lr=1e-5)
+
 loss_function = nn.L1Loss()
 
 
@@ -146,7 +138,7 @@ for epoch in range(epochs):
     train_wer = train_wer / len(train_loader)
     
     print(f"Epoch {epoch+1}, Average Training Loss: {avg_train_loss}, WER: {train_wer}")
-    wandb.log({"train/loss": avg_train_loss, 'train/wer': train_wer})
+    wandb.log({"train/loss": avg_train_loss, 'train/wer': train_wer, 'train/lr': optimizer.param_groups[0]['lr']})
 
     model.eval()
     total_eval_loss = 0
@@ -173,5 +165,6 @@ for epoch in range(epochs):
     
     print(f"Epoch {epoch+1}, Average Evaluation Loss: {avg_eval_loss}, WER: {eval_wer}")
     wandb.log({"eval/loss": avg_eval_loss, "eval/wer": eval_wer})
+    scheduler.step(avg_eval_loss)
 
     torch.save(model.state_dict(), f'{save_dir}/{epoch}.pth')

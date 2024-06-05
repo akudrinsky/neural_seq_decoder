@@ -1,14 +1,15 @@
-from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, Trainer, TrainingArguments
+from transformers import GPT2LMHeadModel, GPT2Config, Trainer, TrainingArguments
 from tqdm import tqdm
-# from datasets import load_from_disk, Dataset
 import numpy as np
 import string
-# from speechbrain.inference.text import GraphemeToPhoneme
 import os
 import torch
 from torch.utils.data import Dataset
 import re
+import random
 from textgrids import TextGrid
+from copy import deepcopy
+from torch.nn.utils.rnn import pad_sequence
 
 class LibriSpeechAlignmentDataset(Dataset):
     def __init__(self, root_folders):
@@ -61,22 +62,11 @@ class LibriSpeechAlignmentDataset(Dataset):
         words = words.strip()  # Remove trailing space
 
         input_ids = [token_to_index[ph] for ph in phonemes if ph in token_to_index]
-        input_ids.append(token_to_index['<EOS>'])
-        
-        labels = [token_to_index[c] for c in words if c in token_to_index]
-        labels.append(token_to_index['<EOS>'])
+        labels = deepcopy(input_ids)
         
         return {'sentence': words, 'phonemes': phonemes, 'input_ids': input_ids, 'labels': labels}
 
-from datasets import load_metric
-metric = load_metric('accuracy')
-
 splits = ['train', 'validation']
-
-# loaded_datasets = {}
-# for split in splits:
-#     dataset_path = f"./wikitext-processed-{split}"
-#     loaded_datasets[split] = load_from_disk(dataset_path)
 
 loaded_datasets = {
     'train': LibriSpeechAlignmentDataset([
@@ -89,12 +79,7 @@ loaded_datasets = {
     ]),
 }
 
-for split in loaded_datasets:
-    print(split, len(loaded_datasets[split]))
-
 def get_phoneme_list():
-    # g2p = GraphemeToPhoneme.from_hparams("speechbrain/soundchoice-g2p", savedir="pretrained_models/soundchoice-g2p")
-    # return g2p.phonemes
     phonemes_list = [
         'AA', 'AE', 'AH', 'AO', 'AW', 'AY', 'B', 'CH', 'D', 'DH', 'EH', 'ER', 'EY', 
         'F', 'G', 'HH', 'IH', 'IY', 'JH', 'K', 'L', 'M', 'N', 'NG', 'OW', 'OY', 'P', 
@@ -102,39 +87,48 @@ def get_phoneme_list():
     ]
     return phonemes_list
 
-tokens = ['<PAD>', '<EOS>', '<START_DEC>', '<UNK>', ' '] + list(string.ascii_lowercase) + get_phoneme_list()
+tokens = ['<PAD>', '<EOS>', '<START_DEC>', '<UNK>', ' '] + get_phoneme_list()
 token_set = set(tokens)
 
 print(tokens)
 token_to_index = {token: idx for idx, token in enumerate(tokens)}
 index_to_token = {idx: token for token, idx in token_to_index.items()}
+phoneme_indexes = [token_to_index[t] for t in get_phoneme_list()]
 
-# config = T5Config(
+# config = GPT2Config(
 #     vocab_size=len(tokens),
-#     num_layers=6,
+#     n_positions=1024,
+#     n_ctx=1024,
+#     n_embd=768,
+#     n_layer=6,
+#     n_head=6,
 #     pad_token_id=token_to_index['<PAD>'], 
 #     eos_token_id=token_to_index['<EOS>'],
-#     decoder_start_token_id=token_to_index['<START_DEC>'],
 # )
-# model = T5ForConditionalGeneration(config).cuda()
+# model = GPT2LMHeadModel(config).cuda()
 
-model = T5ForConditionalGeneration.from_pretrained('./p2g/checkpoint-5000/')
-run_name = 'p2g'
+# model = GPT2LMHeadModel.from_pretrained('./phoneme_lm_gpt2/checkpoint-67500/')
+
+config = GPT2Config.from_pretrained('gpt2')
+
+config.vocab_size = len(tokens)
+config.pad_token_id = token_to_index['<PAD>']
+config.eos_token_id = token_to_index['<EOS>']
+model = GPT2LMHeadModel.from_pretrained('gpt2', config=config, ignore_mismatched_sizes=True)
+
+run_name = 'phoneme_lm_gpt2_pretr'
 
 training_args = TrainingArguments(
     output_dir=f"./{run_name}",
     evaluation_strategy="epoch",
     logging_strategy="epoch",
-    learning_rate=2e-6,
-    per_device_train_batch_size=48,
+    learning_rate=2e-5,
+    per_device_train_batch_size=32,
     num_train_epochs=1000,
     weight_decay=0.01,
     dataloader_num_workers=32,
     run_name=run_name,
 )
-
-import torch
-from torch.nn.utils.rnn import pad_sequence
 
 class CustomDataCollator:
     def __init__(self, pad_token_id):
@@ -156,13 +150,6 @@ class CustomDataCollator:
             'attention_mask': attention_mask,
             'labels': padded_labels
         }
-
-# def compute_metrics(eval_pred):
-#     predictions, labels = eval_pred
-#     predictions = np.argmax(predictions, axis=1)
-#     print(labels, predictions)
-#     asd
-#     return metric.compute(predictions=predictions, references=labels)
 
 trainer = Trainer(
     model=model,

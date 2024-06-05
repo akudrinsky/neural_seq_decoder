@@ -3,8 +3,9 @@ import re
 from speechbrain.inference.text import GraphemeToPhoneme
 from num2words import num2words
 import unicodedata
+from multiprocess import set_start_method
 
-g2p = GraphemeToPhoneme.from_hparams("speechbrain/soundchoice-g2p", savedir="pretrained_models/soundchoice-g2p")
+g2p = None
 
 def remove_words_with_numbers(text):
     # Regex pattern to find words containing digits
@@ -48,41 +49,41 @@ def preprocess_text(example):
     
     return {'sentences': sentences}
 
-splits = ['validation', 'train']
-datasets = load_dataset("wikitext", "wikitext-2-v1", split=splits) # 'train',
-datasets = {split: ds for split, ds in zip(splits, datasets)}
-
-processed_datasets = {split: ds.map(preprocess_text, batched=False, remove_columns=['text']) for split, ds in datasets.items()}
-
-for split in processed_datasets:
-    processed_datasets[split] = processed_datasets[split].map(lambda x: {'sentences': sum(x['sentences'], [])},
-                                                              batched=True, batch_size=1000, num_proc=32)
-
-def create_subset(dataset, subset_ratio=0.1, seed=42):
-    shuffled_dataset = dataset.shuffle(seed=seed)
-
-    num_samples = int(len(shuffled_dataset) * subset_ratio)
-
-    subset = shuffled_dataset.select(range(num_samples))
+def create_subset(dataset, start_frac, end_frac, seed=42):
+    subset = dataset.select(range(int(start_frac * len(dataset)), int(end_frac * len(dataset))))
 
     return subset
-
-for split in splits:
-    processed_datasets[split] = create_subset(processed_datasets[split], subset_ratio=0.05)
-print(datasets)
 
 def phoneme_extraction(example):
     # print(example['sentences'])
     phonemes = g2p(example['sentences'])
     return {'phonemes': phonemes}
 
-print(processed_datasets[splits[0]][:10])
+g2p = GraphemeToPhoneme.from_hparams("speechbrain/soundchoice-g2p", savedir="pretrained_models/soundchoice-g2p", run_opts={"device":"cuda"})
 
-for split in processed_datasets:
-    processed_datasets[split] = processed_datasets[split].map(phoneme_extraction, batched=True, batch_size=1, num_proc=1)
-    # processed_datasets[split] = processed_datasets[split].map(phoneme_extraction, batched=False, num_proc=1)
+if __name__ == '__main__':
+    splits = ['train', 'validation']
+    datasets = load_dataset("wikitext", "wikitext-103-v1", split=splits) # 'train',
+    datasets = {split: ds for split, ds in zip(splits, datasets)}
+    
+    processed_datasets = {split: ds.map(preprocess_text, batched=False, remove_columns=['text']) for split, ds in datasets.items()}
 
-print(processed_datasets[splits[0]][:10])
+    start_frac = 0.030
+    end_frac = 0.045
+    print(f'{start_frac=}, {end_frac=}')
+    for split in splits:
+        processed_datasets[split] = create_subset(processed_datasets[split], start_frac=start_frac, end_frac=end_frac)
+    
+    for split in processed_datasets:
+        processed_datasets[split] = processed_datasets[split].map(lambda x: {'sentences': sum(x['sentences'], [])},
+                                                                  batched=True, batch_size=1000, num_proc=32)
 
-for split in processed_datasets:
-    processed_datasets[split].save_to_disk(f"./wikitext-processed-{split}")
+    print(processed_datasets[splits[0]][:10])
+    
+    for split in processed_datasets:
+        processed_datasets[split] = processed_datasets[split].map(phoneme_extraction, batched=True, batch_size=128, num_proc=1)
+    
+    print(processed_datasets[splits[0]][:10])
+    
+    for split in processed_datasets:
+        processed_datasets[split].save_to_disk(f"./wikitext_full-phonemes-{split}-{start_frac}-{end_frac}")

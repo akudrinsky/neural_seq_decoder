@@ -98,7 +98,7 @@ eval_loader = DataLoader(
 
 model.to(device)
 optimizer = AdamW(model.parameters(), lr=0.02, betas=(0.9, 0.999), eps=0.1, weight_decay=1e-5)
-# scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=args["lrEnd"] / args["lrStart"], total_iters=args["nBatch"])
+scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=10000)
 loss_ctc = torch.nn.CTCLoss(blank=ph2id['_'], reduction="mean", zero_infinity=True)
 
 

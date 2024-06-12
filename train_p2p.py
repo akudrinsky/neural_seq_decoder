@@ -36,7 +36,7 @@ model = get_phoneme_gpt2_model(vocab_size=tokenizer.token_list,
 data_collator = P2PDataCollator(pad_token_id=tokenizer.pad_token)
 
 training_args = TrainingArguments(
-    output_dir=f"./{run_name}",
+    output_dir=f"./checkpoints/{run_name}",
     evaluation_strategy="epoch",
     logging_strategy="epoch",
     learning_rate=2e-5,

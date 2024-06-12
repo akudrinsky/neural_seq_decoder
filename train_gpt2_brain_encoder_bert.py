@@ -14,15 +14,14 @@ from transformers import GPT2LMHeadModel, GPT2Config, BertModel, BertConfig
 from transformers import get_linear_schedule_with_warmup
 
 
-
 USE_WANDB = False
 
 # Define the phoneme list and mappings
 
 def get_phoneme_list():
     phonemes_list = [
-        'AA', 'AE', 'AH', 'AO', 'AW', 'AY', 'B', 'CH', 'D', 'DH', 'EH', 'ER', 'EY', 
-        'F', 'G', 'HH', 'IH', 'IY', 'JH', 'K', 'L', 'M', 'N', 'NG', 'OW', 'OY', 'P', 
+        'AA', 'AE', 'AH', 'AO', 'AW', 'AY', 'B', 'CH', 'D', 'DH', 'EH', 'ER', 'EY',
+        'F', 'G', 'HH', 'IH', 'IY', 'JH', 'K', 'L', 'M', 'N', 'NG', 'OW', 'OY', 'P',
         'R', 'S', 'SH', 'T', 'TH', 'UH', 'UW', 'V', 'W', 'Y', 'Z', 'ZH', 'spn'
     ]
     return phonemes_list
@@ -40,7 +39,7 @@ class BERTEncoder(nn.Module):
         super(BERTEncoder, self).__init__()
 
         self.linear = nn.Linear(input_dim, hidden_dim)
-        
+
         config = BertConfig(
             hidden_size=hidden_dim,
             num_hidden_layers=layer_dim,
@@ -51,7 +50,7 @@ class BERTEncoder(nn.Module):
             max_position_embeddings=512,
         )
         self.bert = BertModel(config)
-    
+
     def forward(self, x):
         x = self.linear(x)
         return self.bert(inputs_embeds=x).last_hidden_state
@@ -62,7 +61,7 @@ class Seq2SeqModel(nn.Module):
         super(Seq2SeqModel, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
-    
+
     def forward(self, neuro, neuro_mask, text_ids_x, text_ids, text_mask):
         encoder_outputs = self.encoder(neuro)
         decoder_outputs = self.decoder(input_ids=text_ids_x, attention_mask=text_mask, encoder_hidden_states=encoder_outputs, encoder_attention_mask=neuro_mask, labels=text_ids)
@@ -130,7 +129,7 @@ def collate_2(batch):
 
     X_padded = pad_sequence(X, batch_first=True, padding_value=0)
     X_padded = torch.cat([X_padded, torch.zeros(X_padded.size(0), 1024-X_padded.size(1), X_padded.size(2))], dim=1)
-    
+
     X_padded = X_padded.reshape(-1, 256, 1024)
     X_mask = X_padded.ne(0).all(-1)
 
@@ -143,7 +142,7 @@ def collate_2(batch):
     transcription_mask = create_attention_mask_from_lengths(transcription_lens, max_len=transcription_ids_y.shape[1])
 
     return X_padded, X_mask, transcription_ids_x, transcription_ids_y, transcription_lens, transcription_mask, transcriptions
-    
+
 # DataLoader
 train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=32, collate_fn=collate_2)
 eval_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=32, collate_fn=collate_2)
@@ -196,7 +195,7 @@ for epoch in range(epochs):
 
         gt_seqs = [s[1:text_lens[i]] for i, s in enumerate(gt_seqs)]
         seqs = [s[:text_lens[i]-1] for i, s in enumerate(seqs)]
-        
+
         if total_train_loss == 0:
             for i in range(3):
                 print('PR: ', seqs[i])
@@ -207,7 +206,7 @@ for epoch in range(epochs):
 
         # Compute loss
         loss = outputs.loss
-        
+
         loss.backward()
         optimizer.step()
         lr_scheduler.step()
@@ -221,7 +220,7 @@ for epoch in range(epochs):
     print()
     avg_train_loss = total_train_loss / len(train_loader)
     train_cer = total_edit_distance / total_seq_length
-    
+
     print(f"Epoch {epoch+1}, Average Training Loss: {avg_train_loss} | CER: {train_cer}")
     if USE_WANDB:
         wandb.log({"train/loss": avg_train_loss, "train/cer_tf": train_cer, 'train/lr': optimizer.param_groups[0]['lr']})
@@ -251,7 +250,7 @@ for epoch in range(epochs):
 
             gt_seqs = [s[1:text_lens[i]] for i, s in enumerate(gt_seqs)]
             seqs = [s[:text_lens[i]-1] for i, s in enumerate(seqs)]
-            
+
             if total_train_loss == 0:
                 for i in range(3):
                     print('PR: ', seqs[i])
@@ -262,7 +261,7 @@ for epoch in range(epochs):
 
     avg_eval_loss = total_eval_loss / len(eval_loader)
     eval_cer = total_edit_distance / total_seq_length
-    
+
     print(f"Epoch {epoch+1}, Average Evaluation Loss: {avg_eval_loss} | CER: {eval_cer}")
     if USE_WANDB:
         wandb.log({"eval/loss": avg_eval_loss, "eval/cer_tf": eval_cer})

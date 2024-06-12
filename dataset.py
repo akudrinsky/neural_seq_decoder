@@ -42,3 +42,13 @@ class DecoderDataset(Dataset):
         phonemes = [self._id2ph[p] for p in self.data[idx]['phonemes'] if p > 0]
         phonemes.append('<EOS>')
         return torch.tensor(self.data[idx]['neuro']).float(), phonemes
+
+class TextDataset(Dataset):
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return torch.tensor(self.data[idx]['neuro']).float(), self.data[idx]['text']

@@ -1,0 +1,9 @@
+transformers
+datasets
+evaluate
+torch
+numpy
+scipy
+edit_distance
+praat-textgrids
+speechbrain

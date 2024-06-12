@@ -1,71 +1,34 @@
-from transformers import GPT2LMHeadModel, GPT2Config, Trainer, TrainingArguments
-from tqdm import tqdm
-import numpy as np
-import string
-import os
+from transformers import Trainer, TrainingArguments
 import torch
-from torch.utils.data import Dataset
-import re
-import random
-from textgrids import TextGrid
-from copy import deepcopy
 from torch.nn.utils.rnn import pad_sequence
+
+from data import LibriSpeechAlignmentDataset
+from models import get_phoneme_gpt2_model
+from token import PhonemeTokenizer
+from data_collators import P2PDataCollator
+
+run_name = 'phoneme_lm_gpt2_newcode'
 
 splits = ['train', 'validation']
 
 loaded_datasets = {
-    'train': concatenate_datasets([
-        load_from_disk('./wikitext_full-phonemes-train-0.0-0.015'),
-        load_from_disk('./wikitext_full-phonemes-train-0.015-0.03'),
-        load_from_disk('./wikitext_full-phonemes-train-0.03-0.045'),
-        load_from_disk('./wikitext_full-phonemes-train-0.045-0.06'),
+    'train': LibriSpeechAlignmentDataset([
+        '/mnt/scratch/kudrinsk/eval_challenge/librispeech_alignments/train-clean-100/',
+        '/mnt/scratch/kudrinsk/eval_challenge/librispeech_alignments/train-clean-360/',
+        '/mnt/scratch/kudrinsk/eval_challenge/librispeech_alignments/dev-clean/',
     ]),
-    'validation': concatenate_datasets([
-        load_from_disk('./wikitext_full-phonemes-validation-0.0-0.015'),
-        load_from_disk('./wikitext_full-phonemes-validation-0.015-0.03'),
-        load_from_disk('./wikitext_full-phonemes-validation-0.03-0.045'),
-        load_from_disk('./wikitext_full-phonemes-validation-0.045-0.06'),
-    ])
+    'validation': LibriSpeechAlignmentDataset([
+        '/mnt/scratch/kudrinsk/eval_challenge/librispeech_alignments/test-clean/',
+    ]),
 }
 
-def get_phoneme_list():
-    phonemes_list = [
-        'AA', 'AE', 'AH', 'AO', 'AW', 'AY', 'B', 'CH', 'D', 'DH', 'EH', 'ER', 'EY', 
-        'F', 'G', 'HH', 'IH', 'IY', 'JH', 'K', 'L', 'M', 'N', 'NG', 'OW', 'OY', 'P', 
-        'R', 'S', 'SH', 'T', 'TH', 'UH', 'UW', 'V', 'W', 'Y', 'Z', 'ZH', 'spn'
-    ]
-    return phonemes_list
+tokenizer = PhonemeTokenizer()
 
-tokens = ['<PAD>', '<EOS>', '<START_DEC>', '<UNK>', ' '] + get_phoneme_list()
-token_set = set(tokens)
+model = get_phoneme_gpt2_model(vocab_size=tokenizer.token_list,
+                               pad_token_id=tokenizer.pad_token,
+                               eos_token_id=tokenizer.eos_token)
 
-print(tokens)
-token_to_index = {token: idx for idx, token in enumerate(tokens)}
-index_to_token = {idx: token for token, idx in token_to_index.items()}
-phoneme_indexes = [token_to_index[t] for t in get_phoneme_list()]
-
-# config = GPT2Config(
-#     vocab_size=len(tokens),
-#     n_positions=1024,
-#     n_ctx=1024,
-#     n_embd=768,
-#     n_layer=6,
-#     n_head=6,
-#     pad_token_id=token_to_index['<PAD>'], 
-#     eos_token_id=token_to_index['<EOS>'],
-# )
-# model = GPT2LMHeadModel(config).cuda()
-
-# model = GPT2LMHeadModel.from_pretrained('./phoneme_lm_gpt2/checkpoint-67500/')
-
-config = GPT2Config.from_pretrained('gpt2')
-
-config.vocab_size = len(tokens)
-config.pad_token_id = token_to_index['<PAD>']
-config.eos_token_id = token_to_index['<EOS>']
-model = GPT2LMHeadModel.from_pretrained('gpt2', config=config, ignore_mismatched_sizes=True)
-
-run_name = 'phoneme_lm_gpt2_pretr'
+data_collator = P2PDataCollator(pad_token_id=tokenizer.pad_token)
 
 training_args = TrainingArguments(
     output_dir=f"./{run_name}",
@@ -79,34 +42,12 @@ training_args = TrainingArguments(
     run_name=run_name,
 )
 
-class CustomDataCollator:
-    def __init__(self, pad_token_id):
-        self.pad_token_id = pad_token_id
-
-    def __call__(self, features):
-        input_ids = [torch.tensor(feature['input_ids']) for feature in features]
-        labels = [torch.tensor(feature['labels']) for feature in features]
-
-        # Pad input_ids and labels
-        padded_input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
-        padded_labels = pad_sequence(labels, batch_first=True, padding_value=-100)
-
-        # Create attention masks for the inputs
-        attention_mask = (padded_input_ids != self.pad_token_id).long()
-
-        return {
-            'input_ids': padded_input_ids,
-            'attention_mask': attention_mask,
-            'labels': padded_labels
-        }
-
 trainer = Trainer(
     model=model,
     args=training_args,
     train_dataset=loaded_datasets['train'],
     eval_dataset=loaded_datasets['validation'],
-    data_collator=CustomDataCollator(token_to_index['<PAD>']),
-    # compute_metrics=compute_metrics,
+    data_collator=data_collator,
 )
 
 trainer.train()

@@ -1,13 +1,18 @@
 from transformers import Trainer, TrainingArguments
-import torch
-from torch.nn.utils.rnn import pad_sequence
 
 from data import LibriSpeechAlignmentDataset
 from models import get_phoneme_gpt2_model
-from token import PhonemeTokenizer
+from custom_tokenizers import PhonemeTokenizer
 from data_collators import P2PDataCollator
 
-run_name = 'phoneme_lm_gpt2_newcode'
+import argparse
+
+arg_parser = argparse.ArgumentParser()
+arg_parser.add_argument('--run_name', type=str, default='phoneme_lm_gpt2_newcode')
+
+args = arg_parser.parse_args()
+
+run_name = args.run_name
 
 splits = ['train', 'validation']
 
